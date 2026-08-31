@@ -5,6 +5,7 @@ import { LogOut, User as UserIcon, Settings } from "lucide-react"
 
 const navItems = [
   { label: "Assembly Line", icon: "precision_manufacturing", to: "/" },
+  { label: "Manufacturing", icon: "factory", to: "/mo" },
 ]
 
 const footerItems = [

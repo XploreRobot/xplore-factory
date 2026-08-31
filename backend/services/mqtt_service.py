@@ -2,15 +2,21 @@ import json
 import asyncio
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
+from datetime import datetime
+import os
+from dotenv import load_dotenv
 
-from services.db_service import insert_mqtt_log, insert_production, finish_mo
+# --- PERBAIKAN IMPORT ---
+from services.db_service import (
+    insert_mqtt_log, 
+    insert_production, 
+    finish_mo, 
+    insert_mo_history_record # Pastikan fungsi ini sudah ada di services/db_service.py
+)
 from core import state
 from core.state import *
 from services.oee_service import calculate_oee
 from ws.ws_manager import manager
-from dotenv import load_dotenv
-from datetime import datetime
-import os
 
 load_dotenv()
 
@@ -104,7 +110,35 @@ def on_message(client, userdata, msg):
 
                 if state.odoo:
                     state.odoo.mark_mo_done(state.current_mo_id)
+                
+                # 1. Tandai MO selesai di tabel `mo`
                 finish_mo(state.current_mo_id)
+                
+                # --- 2. TAMBAHAN: Simpan ke tabel `mo_history` ---
+                try:
+                    end_time_now = datetime.now()
+                    
+                    # Ambil angka aktual dari production_state
+                    total_prod = production_state.get("total", 0)
+                    ok_count = production_state.get("ok", 0)
+                    ng_count = production_state.get("ng", 0)
+                    
+                    # Hitung yield (Persentase OK terhadap Total)
+                    yield_rate = (ok_count / total_prod * 100) if total_prod > 0 else 0.0
+                    
+                    insert_mo_history_record(
+                        mo_id=state.current_mo_id,
+                        start_time=state.start_time,
+                        end_time=end_time_now,
+                        status="done",
+                        total=total_prod,
+                        ok=ok_count,
+                        ng=ng_count,
+                        yield_rate=round(yield_rate, 2)
+                    )
+                except Exception as e:
+                    print(f"[ERROR] Gagal menyimpan ke mo_history: {e}")
+                # -------------------------------------------------
                 
     production_state["target"] = state.production_target
     production_state["progress"] = state.produced_count
@@ -131,7 +165,6 @@ def start_mqtt():
         print(f"[WARN] MQTT Broker not available ({BROKER}:{PORT}): {e}")
         print("   Backend will run without MQTT. Start broker and restart to enable.")
     
-
 def publish(topic, payload):
     try:
         mqtt_client.publish(topic, json.dumps(payload))

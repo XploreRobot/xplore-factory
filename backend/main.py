@@ -67,22 +67,26 @@ def odoo_listener():
             continue
             
         try:
-            mo = state.odoo.get_active_mo()
+            # 1. Cari MO yang statusnya 'Dikonfirmasi'
+            mo = state.odoo.get_confirmed_mo()
 
             if mo and mo["id"] != state.current_mo_id:
-                print(f"[NEW MO] New MO detected: {mo['name']} (was {state.current_mo_id})")
+                print(f"[TRIGGER] New Confirmed MO detected: {mo['name']}")
 
-                # Reset all state before starting the new MO
+                # 2. Otomatis klik tombol "Mulai" di Odoo
+                state.odoo.start_mo(mo["id"])
+
+                # 3. Reset state backend
                 state.reset_state()
 
+                # 4. Set target baru
                 state.current_mo_id = mo["id"]
                 state.production_target = int(mo.get("product_qty", 10))
-
-                # Sync target into production_state for WebSocket broadcast
                 state.production_state["target"] = state.production_target
 
-                print(f"[START] Start MO {mo['name']} target={state.production_target}")
+                print(f"[START] Broadcasting start signal for {mo['name']} (Target: {state.production_target})")
 
+                # 5. Otomatis nyalakan mesin via MQTT
                 publish("mes/target", {"target": state.production_target})
                 publish("mes/control", {"command": "start"})
 

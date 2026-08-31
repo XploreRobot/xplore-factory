@@ -38,14 +38,24 @@ export default function Dashboard() {
         headers: { 'Authorization': `Bearer ${token}` }
       })
 
-      if (!response.ok) throw new Error('Failed to send command')
+      // PERBAIKAN: Tangkap pesan error spesifik dari backend FastAPI
+      if (!response.ok) {
+        let errorMsg = 'Failed to send command';
+        try {
+          const errorData = await response.json();
+          errorMsg = errorData.detail || errorMsg;
+        } catch (parseErr) {
+          // Abaikan jika tidak bisa di-parse
+        }
+        throw new Error(errorMsg);
+      }
       
       toast.success(`Machine command "${command}" sent`, {
         icon: '🚀',
         style: { borderRadius: '10px', background: '#001f51', color: '#fff' }
       })
     } catch (error) {
-      toast.error(error.message)
+      toast.error(error.message) // Sekarang akan menampilkan error asli dari FastAPI
     } finally {
       setIsControlLoading(false)
     }

@@ -7,6 +7,7 @@ import Sidebar from "./components/Sidebar"
 import TopBar from "./components/TopBar"
 import { DarkModeProvider } from "./context/DarkModeContext"
 import { AuthProvider, useAuth } from "./context/AuthContext"
+import ManufacturingOrders from './pages/ManufacturingOrders'; // Sesuaikan lokasi foldernya
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
   const { user, loading } = useAuth();
@@ -66,6 +67,7 @@ function AppContent() {
                 </ProtectedRoute>
               } 
             />
+            <Route path="/mo" element={<ManufacturingOrders />} />
           </Routes>
         </main>
       </div>

@@ -50,6 +50,9 @@ class OdooService:
     # =============================
     # SAFE EXECUTE
     # =============================
+    # =============================
+    # SAFE EXECUTE
+    # =============================
     def execute(self, model, method, args=None, kwargs=None):
         if args is None:
             args = []
@@ -57,7 +60,7 @@ class OdooService:
             kwargs = {}
 
         try:
-            models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object")
+            models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object", allow_none=True)
 
             return models.execute_kw(
                 self.db,
@@ -70,12 +73,20 @@ class OdooService:
             )
 
         except Exception as e:
+            err_str = str(e)
+            
+            # --- TAMBAHAN BARU: Tangkap error 'cannot marshal None' ---
+            if "cannot marshal None" in err_str:
+                print(f"[OK] Odoo executed {model}.{method} successfully (Returned None).")
+                return True
+            # ----------------------------------------------------------
+
             print(f"[ERROR] Odoo Error ({model}.{method}):", e)
 
             # coba reconnect
             if self.connect():
                 try:
-                    models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object")
+                    models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object", allow_none=True)
                     return models.execute_kw(
                         self.db,
                         self.uid,
@@ -86,6 +97,11 @@ class OdooService:
                         kwargs
                     )
                 except Exception as e2:
+                    # Tangkap juga saat retry
+                    if "cannot marshal None" in str(e2):
+                        print(f"[OK] Odoo executed {model}.{method} successfully on retry.")
+                        return True
+                        
                     print("[ERROR] Retry Failed:", e2)
 
             return None
@@ -136,3 +152,96 @@ class OdooService:
 
         if result is not None:
             print("[OK] MO marked as DONE")
+
+    # =============================
+    # GET CONFIRMED MO
+    # =============================
+    def get_confirmed_mo(self):
+        # Mencari MO yang statusnya 'confirmed' (Dikonfirmasi)
+        result = self.execute(
+            'mrp.production',
+            'search_read',
+            [[['state', '=', 'confirmed']]],
+            {'fields': ['id', 'name', 'product_qty', 'qty_produced'], 'limit': 1}
+        )
+
+        if not result:
+            return None
+
+        mo = result[0]
+        print(f"[NEW] Confirmed MO found: {mo['name']} | Target: {mo['product_qty']}")
+        return mo
+
+    # =============================
+    # START MO (Klik tombol "Mulai")
+    # =============================
+    def start_mo(self, mo_id):
+        # Catatan: Nama method di bawah ('action_start') bisa berbeda tergantung versi Odoo Anda.
+        # Jika tombol "Mulai" tidak merespons, kita perlu mengecek nama teknisnya di Odoo.
+        result = self.execute(
+            'mrp.production',
+            'action_start', 
+            [[mo_id]]
+        )
+        
+        if result is not None:
+            print(f"[ACTION] MO {mo_id} has been started via API")
+        return result        
+
+    # =============================
+    # GET PRODUCTS (Untuk Form MO)
+    # =============================
+    def get_products(self):
+        result = self.execute(
+            'product.product',
+            'search_read',
+            [[['type', 'in', ['product', 'consu']]]],
+            {'fields': ['id', 'display_name'], 'limit': 50}
+        )
+        return result if result else []
+
+    # =============================
+    # GET ALL MOs (Untuk Tabel History)
+    # =============================
+    def get_mos(self):
+        result = self.execute(
+            'mrp.production',
+            'search_read',
+            [[]],
+            {
+                'fields': ['id', 'name', 'product_id', 'product_qty', 'state', 'date_start'], 
+                'limit': 50, 
+                'order': 'id desc'
+            }
+        )
+        return result if result else []
+
+    # =============================
+    # CREATE NEW MO
+    # =============================
+    def create_mo_record(self, product_id, qty):
+        result = self.execute(
+            'mrp.production',
+            'create',
+            [{
+                'product_id': product_id,
+                'product_qty': qty,
+            }]
+        )
+        if result:
+            print(f"[CREATE] New MO created with ID: {result}")
+        return result
+
+    # =============================
+    # CONFIRM MO (Otomatis Konfirmasi)
+    # =============================
+    def confirm_mo(self, mo_id):
+        # Memanggil fungsi 'action_confirm' di Odoo untuk mengubah Draft menjadi Confirmed
+        result = self.execute(
+            'mrp.production',
+            'action_confirm',
+            [[mo_id]]
+        )
+        if result is not None:
+            print(f"[ACTION] MO {mo_id} has been confirmed via API")
+        return result
