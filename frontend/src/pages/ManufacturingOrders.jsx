@@ -12,6 +12,9 @@ const ManufacturingOrders = () => {
     const [quantity, setQuantity] = useState(1);
     const [loadingData, setLoadingData] = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    
+    // NEW: State untuk loading per baris saat proses pembatalan
+    const [cancellingId, setCancellingId] = useState(null);
 
     // Konfigurasi API
     const host = import.meta.env.VITE_BACK_HOST || 'localhost';
@@ -88,6 +91,37 @@ const ManufacturingOrders = () => {
             toast.error(error.message);
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    // NEW: Handle Cancel MO
+    const handleCancelMO = async (mo_id, mo_name) => {
+        if (!window.confirm(`Are you sure you want to cancel MO: ${mo_name}?`)) return;
+
+        setCancellingId(mo_id);
+        const token = getToken();
+
+        try {
+            const response = await fetch(`${backendUrl}/cancel_mo/${mo_id}`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Gagal membatalkan Manufacturing Order');
+            }
+
+            toast.success(`MO ${mo_name} berhasil dibatalkan`);
+            fetchData(); // Refresh tabel setelah dibatalkan
+            
+        } catch (error) {
+            toast.error(error.message);
+            console.error("Cancel MO Error:", error);
+        } finally {
+            setCancellingId(null);
         }
     };
 
@@ -195,12 +229,14 @@ const ManufacturingOrders = () => {
                                     <th className="px-6 py-4 text-center">Target Qty</th>
                                     <th className="px-6 py-4">Status</th>
                                     <th className="px-6 py-4">Date</th>
+                                    {/* NEW: Kolom Action */}
+                                    <th className="px-6 py-4 text-center">Action</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-outline-variant">
                                 {loadingData && orders.length === 0 ? (
                                     <tr>
-                                        <td colSpan="5" className="px-6 py-12 text-center text-on-surface-variant">
+                                        <td colSpan="6" className="px-6 py-12 text-center text-on-surface-variant">
                                             <Loader2 className="animate-spin mx-auto mb-2" size={24} />
                                             Loading data from Odoo...
                                         </td>
@@ -221,6 +257,25 @@ const ManufacturingOrders = () => {
                                         </td>
                                         <td className="px-6 py-4 text-xs text-on-surface-variant font-medium">
                                             {order.date}
+                                        </td>
+                                        
+                                        {/* NEW: Kolom Tombol Cancel */}
+                                        <td className="px-6 py-4 text-center">
+                                            {/* Hanya tampilkan tombol cancel jika status bukan done atau cancel */}
+                                            {['draft', 'confirmed', 'progress'].includes(order.status) && (
+                                                <button
+                                                    onClick={() => handleCancelMO(order.id, order.name)}
+                                                    disabled={cancellingId === order.id}
+                                                    className="inline-flex items-center justify-center p-1.5 bg-error/10 text-error hover:bg-error hover:text-white rounded-lg transition-colors disabled:opacity-50"
+                                                    title="Cancel MO"
+                                                >
+                                                    {cancellingId === order.id ? (
+                                                        <Loader2 size={16} className="animate-spin" />
+                                                    ) : (
+                                                        <XCircle size={16} />
+                                                    )}
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

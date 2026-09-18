@@ -3,8 +3,9 @@ from datetime import datetime
 import os
 import threading
 import time
+import xmlrpc.client
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from core import state
 from dotenv import load_dotenv
@@ -59,6 +60,51 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(1)  # keep connection alive
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+# Endpoint Cancel MO untuk Manufacturing Orders
+@app.post("/cancel_mo/{mo_id}")
+async def cancel_manufacturing_order(mo_id: str):
+    if not state.odoo:
+        raise HTTPException(status_code=503, detail="Odoo service is not connected")
+        
+    try:
+        models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(ODOO_URL))
+        
+        # Cari Odoo ID berdasarkan angka atau string referensi MO
+        odoo_id = None
+        if mo_id.isdigit():
+            odoo_id = int(mo_id)
+        else:
+            mo_records = models.execute_kw(
+                ODOO_DB, state.odoo.uid, ODOO_PASSWORD,
+                'mrp.production', 'search',
+                [[('name', '=', mo_id)]]
+            )
+            if not mo_records:
+                raise HTTPException(status_code=404, detail=f"MO '{mo_id}' not found in Odoo")
+            odoo_id = mo_records[0]
+
+        # Eksekusi fungsi pembatalan bawaan Odoo (action_cancel)
+        success = models.execute_kw(
+            ODOO_DB, state.odoo.uid, ODOO_PASSWORD,
+            'mrp.production', 'action_cancel',
+            [[odoo_id]]
+        )
+
+        if success:
+            # Jika MO yang dicancel adalah yang sedang aktif, stop mesin via MQTT
+            if str(state.current_mo_id) == str(odoo_id) or str(state.current_mo_id) == mo_id:
+                publish("mes/control", {"command": "stop"})
+                print(f"[STOP] MO {mo_id} cancelled. Stopping machines.")
+                state.reset_state()
+                
+            return {"status": "success", "message": f"MO {mo_id} cancelled successfully"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to cancel MO in Odoo. It might already be Done or Cancelled.")
+
+    except Exception as e:
+        print(f"[ERROR] Cancel MO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def odoo_listener():
     while True:

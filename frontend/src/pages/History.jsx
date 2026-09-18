@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import OEEChart from "../components/OEEChart"
 
 export default function History() {
   const [moData,     setMoData]     = useState([])
@@ -6,6 +7,7 @@ export default function History() {
   const [detailData, setDetailData] = useState(null)
   const [open,       setOpen]       = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [showOEEChart, setShowOEEChart] = useState(false) // NEW: toggle OEE chart di modal
 
   const host = import.meta.env.VITE_BACK_HOST
 
@@ -26,6 +28,7 @@ export default function History() {
     setDetailLoading(true)
     setOpen(true)
     setDetailData(null)
+    setShowOEEChart(false) // reset toggle tiap buka MO baru
     try {
       const res  = await fetch(`http://${host}:8000/mo_detail/${mo_id}`)
       const json = await res.json()
@@ -53,6 +56,15 @@ export default function History() {
   const totalUnits = moData.reduce((s, m) => s + (m.total_production ?? 0), 0)
   const avgYield   = totalUnits > 0 ? ((totalOK / totalUnits) * 100).toFixed(1) : "—"
 
+  // NEW: rata-rata OEE seluruh MO (mengasumsikan tiap item punya field oee_rate 0-100)
+  const moWithOee = moData.filter(m => m.oee_rate != null)
+  const avgOEE = moWithOee.length > 0
+    ? (moWithOee.reduce((s, m) => s + m.oee_rate, 0) / moWithOee.length).toFixed(1)
+    : "—"
+
+  // NEW: nilai OEE untuk MO yang sedang dibuka di modal
+  const detailOeeVal = detailData?.summary?.oee ? detailData.summary.oee.oee : null
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 bg-background min-h-full animate-fadeIn">
 
@@ -76,11 +88,13 @@ export default function History() {
       </div>
 
       {/* ── KPI strip ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
         <SummaryCard label="MOs Completed" value={totalMOs}   icon="assignment_turned_in" />
         <SummaryCard label="Total Units"   value={totalUnits} icon="inventory"  />
         <SummaryCard label="Total OK"      value={totalOK}    icon="check_circle" color="text-secondary" />
         <SummaryCard label="Avg Yield"     value={avgYield === "—" ? "—" : `${avgYield}%`} icon="percent" color={parseFloat(avgYield) >= 95 ? "text-secondary" : "text-error"} />
+        {/* NEW: KPI Avg OEE, sama gaya seperti KPICard highlight di Dashboard */}
+        <SummaryCard label="Avg OEE" value={avgOEE === "—" ? "—" : `${avgOEE}%`} icon="query_stats" color={avgOEE !== "—" && parseFloat(avgOEE) >= 85 ? "text-secondary" : "text-error"} />
       </div>
 
       {/* ── MO Table ── */}
@@ -98,7 +112,8 @@ export default function History() {
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="bg-primary text-on-primary">
-                {["MO", "Total", "OK", "NG", "Yield", "Start", "End"].map(h => (
+                {/* NEW: tambah kolom OEE */}
+                {["MO", "Total", "OK", "NG", "Yield", "OEE", "Start", "End"].map(h => (
                   <th key={h} className="px-4 py-3 text-[10px] uppercase tracking-widest font-semibold border-b border-primary-container whitespace-nowrap">
                     {h}
                   </th>
@@ -108,14 +123,14 @@ export default function History() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-on-surface-variant text-sm">
+                  <td colSpan={8} className="px-4 py-10 text-center text-on-surface-variant text-sm">
                     <span className="material-symbols-outlined text-[20px] animate-spin mr-2">progress_activity</span>
                     Loading…
                   </td>
                 </tr>
               ) : moData.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-on-surface-variant text-sm">
+                  <td colSpan={8} className="px-4 py-10 text-center text-on-surface-variant text-sm">
                     No manufacturing orders found.
                   </td>
                 </tr>
@@ -133,6 +148,10 @@ export default function History() {
                   <td className="px-4 py-3 font-semibold text-error">{item.ng_count ?? "—"}</td>
                   <td className="px-4 py-3">
                     <YieldBadge value={item.yield_rate} />
+                  </td>
+                  {/* NEW: badge OEE per MO */}
+                  <td className="px-4 py-3">
+                    <OEEBadge value={item.oee_rate} />
                   </td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{fmtTime(item.start_time)}</td>
                   <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap">{fmtTime(item.end_time)}</td>
@@ -185,24 +204,62 @@ export default function History() {
               ) : detailData ? (
                 <>
                   {/* Summary cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
                     <ModalCard label="Total"  value={detailData.summary.total} />
                     <ModalCard label="OK"     value={detailData.summary.ok}    color="text-secondary" />
                     <ModalCard label="NG"     value={detailData.summary.ng}    color="text-error" />
                     <ModalCard label="Yield"  value={`${detailData.summary.yield_rate}%`}
                       color={detailData.summary.yield_rate >= 95 ? "text-secondary" : "text-error"} />
+                    {/* NEW: card OEE, klik untuk toggle breakdown chart seperti di Dashboard */}
+                    <ModalCard
+                      label="OEE"
+                      value={detailOeeVal !== null ? `${detailOeeVal}%` : "—"}
+                      color={detailOeeVal !== null ? (detailOeeVal >= 85 ? "text-secondary" : "text-error") : "text-on-surface"}
+                      onClick={detailOeeVal !== null ? () => setShowOEEChart(prev => !prev) : undefined}
+                    />
                   </div>
+
+                  {/* NEW: OEE Breakdown chart (toggle), reuse komponen OEEChart dari Dashboard */}
+                  {showOEEChart && detailData.summary.oee && (
+                    <div className="bg-white border border-outline-variant rounded-xl p-6 animate-fadeIn">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-base font-bold text-primary">OEE Breakdown</h3>
+                        <button
+                          onClick={() => setShowOEEChart(false)}
+                          className="p-1.5 text-on-surface-variant hover:bg-surface-container rounded-lg transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">close</span>
+                        </button>
+                      </div>
+                      {/* OEEChart mengharapkan prop `production` dengan shape { oee: {...} } sama seperti di Dashboard */}
+                      <OEEChart production={{ oee: detailData.summary.oee }} />
+                    </div>
+                  )}
 
                   {/* Production history sub-table */}
                   <ModalTable
                     title="Production History"
                     icon="inventory_2"
-                    headers={["Product ID", "Result", "Start", "End"]}
+                    headers={["Product ID", "Result", "Warna", "Start", "End"]}
                     rows={detailData.production_history}
                     renderRow={(p, i) => (
                       <tr key={i} className={`border-b border-outline-variant hover:bg-surface-container-low transition-colors ${i % 2 === 1 ? "bg-surface-bright" : ""}`}>
                         <td className="px-4 py-2.5 font-mono text-sm font-medium text-primary">{p.product_id}</td>
                         <td className="px-4 py-2.5"><ResultBadge value={p.result} /></td>
+                        {/* NEW: kolom warna hasil deteksi Conveyor2 (hitam/putih), sebelumnya
+                            data ini cuma live broadcast dan tidak pernah tersimpan/ditampilkan di History */}
+                        <td className="px-4 py-2.5">
+                          {p.warna ? (
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              p.warna === "hitam" ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 border border-gray-300"
+                            }`}>
+                              <span className={`w-2 h-2 rounded-full border border-gray-400 ${p.warna === "hitam" ? "bg-black" : "bg-white"}`} />
+                              {p.warna}
+                            </span>
+                          ) : (
+                            <span className="text-on-surface-variant">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-sm text-on-surface-variant whitespace-nowrap">{fmtTime(p.start_time)}</td>
                         <td className="px-4 py-2.5 text-sm text-on-surface-variant whitespace-nowrap">{fmtTime(p.end_time)}</td>
                       </tr>
@@ -259,9 +316,13 @@ function SummaryCard({ label, value, icon, color = "text-primary" }) {
   )
 }
 
-function ModalCard({ label, value, color = "text-on-surface" }) {
+// NEW: tambah prop onClick agar ModalCard bisa jadi tombol toggle (dipakai untuk card OEE)
+function ModalCard({ label, value, color = "text-on-surface", onClick }) {
   return (
-    <div className="bg-surface-container-low border border-outline-variant rounded-xl p-4">
+    <div
+      onClick={onClick}
+      className={`bg-surface-container-low border border-outline-variant rounded-xl p-4 ${onClick ? "cursor-pointer hover:bg-surface-container transition-colors" : ""}`}
+    >
       <div className="text-[10px] uppercase tracking-widest font-semibold text-on-surface-variant mb-1">{label}</div>
       <div className={`text-2xl font-medium font-mono ${color}`}>{value}</div>
     </div>
@@ -304,6 +365,22 @@ function YieldBadge({ value }) {
   const cls = pct >= 95
     ? "bg-secondary-fixed text-on-secondary-fixed"
     : pct >= 85
+    ? "bg-yellow-100 text-yellow-700"
+    : "bg-error-container text-on-error-container"
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${cls}`}>
+      {value}%
+    </span>
+  )
+}
+
+// NEW: badge OEE per baris MO, dengan skema warna sama seperti YieldBadge
+function OEEBadge({ value }) {
+  if (value == null) return <span className="text-on-surface-variant">—</span>
+  const pct = parseFloat(value)
+  const cls = pct >= 85
+    ? "bg-secondary-fixed text-on-secondary-fixed"
+    : pct >= 60
     ? "bg-yellow-100 text-yellow-700"
     : "bg-error-container text-on-error-container"
   return (

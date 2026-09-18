@@ -32,8 +32,8 @@ def insert_production(data, mo_id):
 
         cursor.execute(
             """
-            INSERT INTO production_history (product_id, mo_id, result, start_time, end_time)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO production_history (product_id, mo_id, result, start_time, end_time, warna)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """,
             (
                 data.get("product_id"),
@@ -41,6 +41,7 @@ def insert_production(data, mo_id):
                 data.get("result"),
                 state.start_time,
                 state.end_time,
+                data.get("warna"),  # NEW: hasil deteksi warna Conveyor2 (hitam/putih/None)
             ),
         )
         conn.commit()
@@ -143,7 +144,7 @@ def get_production_history(
     cursor = conn.cursor()
 
     query = """
-        SELECT product_id, mo_id, result, start_time, end_time
+        SELECT product_id, mo_id, result, start_time, end_time, warna
         FROM production_history
         WHERE 1=1
     """
@@ -179,6 +180,7 @@ def get_production_history(
             "result": row[2],
             "start_time": row[3].isoformat() if row[3] else None,
             "end_time": row[4].isoformat() if row[4] else None,
+            "warna": row[5],  # NEW: hasil deteksi warna Conveyor2
         }
         for row in rows
     ]
@@ -192,7 +194,7 @@ def get_mo_detail(mo_id):
         # 1. Ambil production_history
         cursor.execute(
             """
-            SELECT product_id, result, start_time, end_time
+            SELECT product_id, result, start_time, end_time, warna
             FROM production_history
             WHERE mo_id = %s
             ORDER BY end_time ASC
@@ -214,6 +216,7 @@ def get_mo_detail(mo_id):
                 "result": row[1],
                 "start_time": row[2].isoformat() if row[2] else None,
                 "end_time": row[3].isoformat() if row[3] else None,
+                "warna": row[4],  # NEW: hasil deteksi warna Conveyor2
             })
 
         # 2. Ambil workcenter_log berdasarkan product_id
@@ -252,6 +255,25 @@ def get_mo_detail(mo_id):
         ng = sum(1 for p in productions if p["result"] == "ng")
         yield_rate = (ok / total * 100) if total > 0 else 0
 
+        # 4. Ambil OEE yang tersimpan di mo_history (dihitung & disimpan saat MO selesai)
+        oee_summary = None
+        cursor.execute(
+            """
+            SELECT oee_rate, availability_rate, performance_rate, quality_rate
+            FROM mo_history
+            WHERE mo_id = %s
+        """,
+            (str(mo_id),),
+        )
+        oee_row = cursor.fetchone()
+        if oee_row and oee_row[0] is not None:
+            oee_summary = {
+                "oee": float(oee_row[0]),
+                "availability": float(oee_row[1]) if oee_row[1] is not None else None,
+                "performance": float(oee_row[2]) if oee_row[2] is not None else None,
+                "quality": float(oee_row[3]) if oee_row[3] is not None else None,
+            }
+
         return {
             "mo_id": str(mo_id),
             "summary": {
@@ -259,6 +281,7 @@ def get_mo_detail(mo_id):
                 "ok": ok,
                 "ng": ng,
                 "yield_rate": round(yield_rate, 2),
+                "oee": oee_summary,
             },
             "production_history": productions,
             "workcenter_log": logs,
@@ -279,7 +302,8 @@ def get_mo_history(mo_id=None, search=None, limit=50):
 
     try:
         query = """
-            SELECT mo_id, start_time, end_time, status, total_production, ok_count, ng_count, yield_rate, duration
+            SELECT mo_id, start_time, end_time, status, total_production, ok_count, ng_count, yield_rate, duration,
+                   oee_rate
             FROM mo_history
             WHERE 1=1
         """
@@ -310,6 +334,7 @@ def get_mo_history(mo_id=None, search=None, limit=50):
                 "ng_count": row[6],
                 "yield_rate": row[7],
                 "duration": row[8],
+                "oee_rate": float(row[9]) if row[9] is not None else None,
             }
             for row in rows
         ]
@@ -363,7 +388,8 @@ def finish_mo(mo_id):
 
 
 def insert_mo_history_record(
-    mo_id, start_time, end_time, status, total, ok, ng, yield_rate
+    mo_id, start_time, end_time, status, total, ok, ng, yield_rate,
+    oee_rate=None, availability_rate=None, performance_rate=None, quality_rate=None
 ):
     conn = get_connection()
     cursor = conn.cursor()
@@ -377,8 +403,9 @@ def insert_mo_history_record(
         cursor.execute(
             """
             INSERT INTO mo_history 
-            (mo_id, start_time, end_time, status, total_production, ok_count, ng_count, yield_rate, duration)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (mo_id, start_time, end_time, status, total_production, ok_count, ng_count, yield_rate, duration,
+             oee_rate, availability_rate, performance_rate, quality_rate)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
             (
                 str(mo_id),
@@ -390,6 +417,10 @@ def insert_mo_history_record(
                 ng,
                 yield_rate,
                 duration_str,
+                oee_rate,
+                availability_rate,
+                performance_rate,
+                quality_rate,
             ),
         )
         conn.commit()
