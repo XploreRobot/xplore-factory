@@ -134,6 +134,19 @@ def on_message(client, userdata, msg):
         print(f"[WARN] Payload tidak valid JSON di topic {topic}, diabaikan.")
         return
 
+    # NEW (FIX BUG KRITIS): payload yang VALID JSON tapi BUKAN dict (mis. topic lain
+    # publish payload mentah "1" -> json.loads("1") sukses jadi int 1, BUKAN error)
+    # sebelumnya bikin baris "payload['timestamp'] = ..." di bawah meledak
+    # (TypeError: 'int' object does not support item assignment). Exception ini
+    # TIDAK tertangkap dan MEMATIKAN THREAD MQTT paho SELURUHNYA -- akibatnya
+    # dashboard berhenti total menerima pesan apa pun (semua AGV kelihatan
+    # "terputus" walau produksi aslinya masih jalan normal), dan perlu restart
+    # manual backend ini untuk pulih. Fix: skip saja pesan seperti ini, jangan
+    # sampai mematikan thread.
+    if not isinstance(payload, dict):
+        print(f"[WARN] Payload di topic {topic} bukan objek JSON (dict), diabaikan: {payload!r}")
+        return
+
     server_time = datetime.now()
 
     # inject ke payload
